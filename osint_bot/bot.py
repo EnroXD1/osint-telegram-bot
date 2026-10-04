@@ -46,7 +46,6 @@ KEYBOARD = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text="🌐 Домен / IP"), KeyboardButton(text="💬 Профили")],
     [KeyboardButton(text="📲 Телефон / email"), KeyboardButton(text="🚘 VIN")],
     [KeyboardButton(text="🏢 Компания"), KeyboardButton(text="ℹ️ Помощь")],
-    [KeyboardButton(text="🔎 Поиск в сети")],
 ], resize_keyboard=True, input_field_placeholder="Домен, IP, @логин или /vin …")
 
 HINTS = {
@@ -56,7 +55,6 @@ HINTS = {
     "🚘 VIN": "Отправьте /vin 1HGCM82633A004352. Бот запрашивает технические характеристики в NHTSA.",
     "🏢 Компания": "Отправьте /inn 7707083893 или /ogrn 1027700132195. Карточка юрлица появляется при подключении DaData.",
     "ℹ️ Помощь": HELP,
-    "🔎 Поиск в сети": "Отправьте /search @octocat или /search Иван Иванов. Поиск публичных страниц работает при подключённом ключе Brave и расходует квоту API.",
 }
 
 
@@ -149,8 +147,7 @@ async def run_bot(config: Config) -> None:
                 ("privacy", "Обработка данных"), ("id", "Мой Telegram ID"),
                 ("domain", "Проверить домен"), ("ip", "Проверить IP"), ("vin", "Расшифровать VIN"),
                 ("phone", "Проверить формат телефона"), ("email", "Проверить почтовый домен"),
-                ("user", "Проверить публичный логин"), ("search", "Публичные страницы через Brave"),
-                ("inn", "Проверить ИНН"), ("ogrn", "Проверить ОГРН")]])
+                ("user", "Проверить публичный логин"), ("inn", "Проверить ИНН"), ("ogrn", "Проверить ОГРН")]])
             print(f"Бот @{info.username} запущен. Для остановки нажмите Ctrl+C.", flush=True)
             await dispatcher.start_polling(bot, allowed_updates=["message"], tasks_concurrency_limit=24)
     finally:

@@ -33,7 +33,6 @@ class Config:
     rate_limit: int = 10
     timeout: float = 10.0
     github_token: str = field(default="", repr=False)
-    brave_token: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -51,5 +50,4 @@ class Config:
             raise ValueError("DEFAULT_PHONE_REGION должен быть кодом страны: RU, US и т. п.")
         return cls(os.getenv("BOT_TOKEN", "").strip(), allowed,
                    os.getenv("DADATA_API_TOKEN", "").strip(), region, rate, timeout,
-                   os.getenv("GITHUB_API_TOKEN", "").strip(),
-                   os.getenv("BRAVE_SEARCH_API_KEY", "").strip())
+                   os.getenv("GITHUB_API_TOKEN", "").strip())

@@ -7,6 +7,7 @@ HELP = """<b>🕵️ Открытый след</b>
 📲 <code>/phone +79999688666</code> — формат и план нумерации
 📧 <code>name@example.com</code> — домен и почтовые DNS-записи
 💬 <code>@octocat</code> или <code>/user octocat</code> — GitHub, Telegram и ссылки на другие платформы
+📟 <code>t.me/public_channel</code> — карточка публичного канала/группы: ID, логин, название и описание
 💬 <code>vk.com/sherlock</code>, <code>tiktok.com/@sherlock</code>, <code>instagram.com/sherlock</code>, <code>ok.ru/profile/58460</code> — распознавание публичной ссылки
 🏢 <code>/inn 7707083893</code> или <code>/ogrn 1027700132195</code> — проверка реквизитов; карточка компании при подключённом DaData
 
@@ -33,7 +34,7 @@ SOURCES = """<b>Источники</b>
 • <a href="https://data.iana.org/rdap/">IANA + реестры RDAP</a>: регистрация доменов и IP-сетей. Персональные контакты не выводятся.
 • <a href="https://vpic.nhtsa.dot.gov/api/">NHTSA vPIC</a>: расшифровка VIN; полнота зависит от покрытия.
 • <a href="https://docs.github.com/en/rest/users/users#get-a-user">GitHub API</a>: сведения открытого профиля.
-• <a href="https://core.telegram.org/bots/api#getchat">Telegram Bot API</a>: доступные публичные каналы и группы. Произвольный личный профиль по ID не находится.
+• <a href="https://core.telegram.org/bots/api#getchat">Telegram Bot API</a>: ID, логин, название и описание доступного публичного канала/группы. Произвольный личный профиль по @логину или ID не находится.
 • <a href="https://github.com/daviddrysdale/python-phonenumbers">phonenumbers</a>: локальный справочник плана нумерации.
 • <a href="https://dadata.ru/api/find-party/">DaData</a>: только карточки юрлиц, нужен ваш API-ключ и доступная квота.
 • <a href="https://egrul.nalog.ru/index.html">ЕГРЮЛ</a>: ссылка на официальный ручной поиск.

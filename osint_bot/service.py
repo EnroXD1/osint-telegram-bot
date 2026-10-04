@@ -156,21 +156,26 @@ class LookupService:
         return Card("💬 GitHub: открытый профиль", lines, [("Профиль", "https://github.com/" + handle), ("Ответ API", url)])
 
     async def _telegram_card(self, handle, bot):
-        card = Card("📟 Telegram", ["Логин: @" + handle], [("Открыть в Telegram", "https://t.me/" + handle)])
+        card = Card("📟 Telegram: публичная карточка", ["Логин: @" + handle],
+                    [("Открыть в Telegram", "https://t.me/" + handle),
+                     ("Источник: Telegram Bot API", "https://core.telegram.org/bots/api#getchat")])
         if bot is None or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", handle):
             card.lines.append("Ссылка сформирована; существование аккаунта не проверено.")
             return card
         from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramAPIError
         try:
             chat = await bot.get_chat("@" + handle)
-            if chat.type not in {"channel", "supergroup"}:
-                card.lines.append("Публичный канал или группа не подтверждены.")
+            if chat.type not in {"channel", "supergroup"} or getattr(chat, "is_direct_messages", False):
+                card.lines.append("Публичный канал или группа не подтверждены. Личный профиль по произвольному @логину через Bot API не ищется.")
                 return card
-            card.lines.extend(["Публичный канал или группа подтверждены Telegram API.",
-                               "Название: " + (chat.title or "—"), "Описание: " + (chat.description or "—"),
-                               "Тип: " + str(chat.type)])
+            card.lines = ["💬 ID канала/группы: " + str(chat.id),
+                          "🔗 Логин: @" + (chat.username or handle),
+                          "📝 Название: " + (chat.title or "не указано"),
+                          "🏷 Тип: " + ("публичный канал" if chat.type == "channel" else "публичная группа"),
+                          "📄 Описание: " + (chat.description or "не указано"),
+                          "✅ Сведения получены через Telegram Bot API."]
         except (TelegramBadRequest, TelegramForbiddenError):
-            card.lines.append("Публичный канал или группа через Bot API не подтверждены. Это не означает, что пользователь с таким логином отсутствует.")
+            card.lines.append("Публичный канал или группа через Bot API не подтверждены. Это не означает, что аккаунт отсутствует. Личный профиль по произвольному @логину через Bot API не ищется.")
         except TelegramAPIError:
             card.lines.append("Telegram API сейчас недоступен; ссылка не проверена.")
         return card

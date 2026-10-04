@@ -4,12 +4,9 @@ import ipaddress
 import json
 import re
 import time
-from html import unescape
 from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
-
-from .parser import QueryError, normalize_domain
 
 
 class SourceError(Exception):
@@ -17,7 +14,7 @@ class SourceError(Exception):
 
 
 FIXED_HOSTS = {"dns.google", "data.iana.org", "api.github.com",
-               "vpic.nhtsa.dot.gov", "suggestions.dadata.ru", "api.search.brave.com"}
+               "vpic.nhtsa.dot.gov", "suggestions.dadata.ru"}
 
 
 def validate_source_url(url: str, allowed_hosts: set[str]) -> None:
@@ -148,48 +145,6 @@ class SourceClient:
         if token:
             headers["Authorization"] = "Bearer " + token
         return await self._json(f"https://api.github.com/users/{quote(handle, safe='')}", headers=headers)
-
-    async def brave_search(self, terms: str, token: str) -> list[tuple[str, str]]:
-        if not token:
-            raise SourceError("Для поиска нужен BRAVE_SEARCH_API_KEY.")
-        data, _ = await self._json("https://api.search.brave.com/res/v1/web/search",
-                                  params={"q": terms, "count": 5, "result_filter": "web",
-                                          "spellcheck": "false", "text_decorations": "false",
-                                          "safesearch": "strict"},
-                                  headers={"Accept": "application/json", "X-Subscription-Token": token})
-        web = data.get("web")
-        if web is None:
-            return []
-        if not isinstance(web, dict) or not isinstance(web.get("results"), list):
-            raise SourceError("Brave вернул неожиданный формат результатов.")
-        results = []
-        seen = set()
-        for record in web["results"]:
-            if not isinstance(record, dict):
-                continue
-            url = record.get("url")
-            if not isinstance(url, str) or len(url) > 2048 or any(c.isspace() or ord(c) < 32 for c in url):
-                continue
-            try:
-                parsed = urlsplit(url)
-                host = parsed.hostname or ""
-                validate_source_url(url, {host})
-                try:
-                    ipaddress.ip_address(host)
-                except ValueError:
-                    normalize_domain(host)
-            except (SourceError, QueryError, ValueError):
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            title = record.get("title")
-            title = unescape(re.sub(r"<[^>]*>", "", title)) if isinstance(title, str) else host
-            title = " ".join(title.split())[:200] or host
-            results.append((title, url))
-            if len(results) == 5:
-                break
-        return results
 
     async def vin(self, vin: str) -> tuple[dict, str]:
         data, url = await self._json(f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/{vin}",

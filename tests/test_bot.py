@@ -72,6 +72,20 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parse_query("/passport 1234567890").value, "/passport")
         self.assertEqual(parse_query("Иванов Иван Иванович 01.01.1980").value, "person")
 
+    def test_search_accepts_names_and_handles_without_sensitive_identifiers(self):
+        for text, expected in (("/search @octocat", "octocat"),
+                               ("/search@demo_bot Иван   Иванов", "Иван Иванов"),
+                               ("/search John O’Connor", "John O’Connor"),
+                               ("/search demo_name-42", "demo_name-42")):
+            with self.subTest(text=text):
+                query = parse_query(text)
+                self.assertEqual((query.kind, query.value), ("search", expected))
+        for value in ("", "+79999688666", "79999688666", "name@example.com",
+                      "Иван Иванов 01.01.1980", "site:example.com", "https://example.com",
+                      "@user123456789", "a" * 201, " ".join(["word"] * 31)):
+            with self.subTest(value=value), self.assertRaises(QueryError):
+                parse_query("/search " + value)
+
 
 class LocalTests(unittest.TestCase):
     def test_business_checksums(self):
@@ -114,10 +128,105 @@ class LocalTests(unittest.TestCase):
             self.assertEqual(os.environ["DADATA_API_TOKEN"], "$(secret)")
 
     def test_secret_fields_not_in_repr(self):
-        self.assertNotIn("secret-token", repr(Config(token="secret-token", dadata_token="secret-token", github_token="secret-token")))
+        self.assertNotIn("secret-token", repr(Config(token="secret-token", dadata_token="secret-token", github_token="secret-token", brave_token="secret-token")))
+
+    def test_brave_key_loaded_from_environment(self):
+        with patch("osint_bot.config.load_env"), patch.dict("os.environ", {"BRAVE_SEARCH_API_KEY": " TEST_ONLY "}, clear=True):
+            self.assertEqual(Config.from_env().brave_token, "TEST_ONLY")
 
 
 class SourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_brave_request_and_public_links(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(200, json={"web": {"results": [{
+                "title": "<b>Public</b> &amp; &lt;profile&gt;", "url": "https://github.com/octocat",
+                "description": "DESCRIPTION_MUST_NOT_BE_DISPLAYED", "phone": "PRIVATE_PHONE"}]}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            service = LookupService(SourceClient(client), Config(brave_token="BRAVE_TEST_SECRET"))
+            report = (await service.lookup(parse_query("/search @octocat")))[0].render()
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertEqual((request.method, request.url.host, request.url.path),
+                         ("GET", "api.search.brave.com", "/res/v1/web/search"))
+        self.assertEqual(request.headers["X-Subscription-Token"], "BRAVE_TEST_SECRET")
+        self.assertEqual(request.url.params["q"], "octocat")
+        self.assertEqual(request.url.params["count"], "5")
+        self.assertEqual(request.url.params["result_filter"], "web")
+        self.assertEqual(request.url.params["spellcheck"], "false")
+        self.assertNotIn("BRAVE_TEST_SECRET", str(request.url))
+        self.assertIn("Public &amp; &lt;profile&gt;", report)
+        self.assertIn("https://github.com/octocat", report)
+        self.assertIn("не подтверждает личность", report)
+        for private in ("BRAVE_TEST_SECRET", "DESCRIPTION_MUST_NOT_BE_DISPLAYED", "PRIVATE_PHONE"):
+            self.assertNotIn(private, report)
+
+    async def test_brave_filters_unsafe_links_duplicates_and_result_limit(self):
+        unsafe = ["http://example.com", "javascript:alert(1)", "https://127.0.0.1/",
+                  "https://169.254.169.254/", "https://localhost/", "https://example.local/",
+                  "https://user:secret@example.com/", "https://example.com:8080/",
+                  "https://example.com:bad/", "https://example.com/ space", "https://example.com/" + "x" * 2048]
+        records = [None, {"title": "No URL"}, *[{"url": url} for url in unsafe],
+                   *[{"title": f"Result {i}", "url": f"https://example.com/page{i}"} for i in range(7)]]
+        records.insert(len(unsafe) + 3, {"title": "Duplicate", "url": "https://example.com/page0"})
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(200, json={"web": {"results": records}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            results = await SourceClient(client).brave_search("Public profile", "TEST_ONLY")
+        self.assertEqual(len(requests), 1)  # No visits to result pages.
+        self.assertEqual([url for _, url in results], [f"https://example.com/page{i}" for i in range(5)])
+
+    async def test_brave_missing_key_does_not_make_a_request(self):
+        async def forbidden(request):
+            self.fail("Unexpected external request without a Brave key")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as client:
+            cards = await LookupService(SourceClient(client), Config()).lookup(parse_query("/search Иван Иванов"))
+        self.assertIn("BRAVE_SEARCH_API_KEY", cards[0].render())
+        self.assertIn("пока не подключён", cards[0].render())
+
+    async def test_brave_is_only_called_for_explicit_search(self):
+        requests = []
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(404)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            service = LookupService(SourceClient(client), Config(brave_token="TEST_ONLY"))
+            for text in ("@octocat", "/phone +79999688666", "/passport 1234567890", "Иван Иванов"):
+                await service.lookup(parse_query(text))
+        self.assertEqual([r.url.host for r in requests], ["api.github.com"])
+        self.assertNotIn("X-Subscription-Token", requests[0].headers)
+
+    async def test_brave_empty_and_malformed_responses(self):
+        for payload, expected in (({}, "Подходящих публичных ссылок"),
+                                  ({"web": None}, "Подходящих публичных ссылок"),
+                                  ({"web": {"results": []}}, "Подходящих публичных ссылок"),
+                                  ({"web": []}, "неожиданный формат"),
+                                  ({"web": {"results": {}}}, "неожиданный формат")):
+            with self.subTest(payload=payload):
+                async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))) as client:
+                    report = (await LookupService(SourceClient(client), Config(brave_token="TEST_ONLY")).lookup(parse_query("/search octocat")))[0].render()
+                self.assertIn(expected, report)
+
+    async def test_brave_errors_do_not_expose_keys_or_retry_billable_requests(self):
+        for status, expected in ((401, "проверьте ключ"), (403, "проверьте ключ"),
+                                 (429, "Лимит"), (503, "недоступен"), (302, "недоступен"),
+                                 (200, "некорректный JSON"), (0, "связаться")):
+            requests = []
+            def handler(request):
+                requests.append(request)
+                if not status:
+                    raise httpx.ConnectError("BRAVE_TEST_SECRET", request=request)
+                return httpx.Response(status, content=b"BRAVE_TEST_SECRET", headers={"Location": "https://other.example/"})
+            with self.subTest(status=status):
+                async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                    report = (await LookupService(SourceClient(client), Config(brave_token="BRAVE_TEST_SECRET")).lookup(parse_query("/search octocat")))[0].render()
+                self.assertEqual(len(requests), 1)
+                self.assertIn(expected, report)
+                self.assertNotIn("BRAVE_TEST_SECRET", report)
+
     async def test_email_shares_only_domain(self):
         requests = []
         def handler(request):
@@ -320,6 +429,14 @@ class TelegramTests(unittest.IsolatedAsyncioTestCase):
         methods = [call.args[1] for call in bot.session.call_args_list]
         self.assertEqual([type(m).__name__ for m in methods], ["SendChatAction", "SendMessage"])
         self.assertIn("Готово", methods[-1].text)
+
+    async def test_search_routes_and_menu_hint(self):
+        bot, service = await self.dispatch("/search @octocat")
+        self.assertEqual(service.lookup.call_args.args[0].kind, "search")
+        self.assertEqual(service.lookup.call_args.args[0].value, "octocat")
+        bot, service = await self.dispatch("🔎 Поиск в сети")
+        service.lookup.assert_not_awaited()
+        self.assertIn("/search", bot.session.call_args.args[1].text)
 
     async def test_start_shows_russian_keyboard_without_lookup(self):
         bot, service = await self.dispatch("/start")

@@ -155,6 +155,29 @@ class LookupService:
                  "Одинаковый логин на разных платформах не доказывает, что аккаунты принадлежат одному человеку."]
         return Card("💬 GitHub: открытый профиль", lines, [("Профиль", "https://github.com/" + handle), ("Ответ API", url)])
 
+    async def _search(self, query, bot):
+        card = Card("🔎 Brave Search: публичные страницы", [],
+                    [("Источник: Brave Search API", "https://api-dashboard.search.brave.com/api-reference/web/search/get")])
+        if not self.config.brave_token:
+            card.lines = ["Поиск Brave пока не подключён.",
+                          "Владелец бота может добавить BRAVE_SEARCH_API_KEY в переменные Bothost и перезапустить бот."]
+            return [card]
+        try:
+            results = await self.sources.brave_search(query.value, self.config.brave_token)
+        except SourceError as error:
+            card.lines = [str(error)]
+            return [card]
+        card.lines = ["Запрос: " + query.value]
+        if results:
+            card.lines.extend(["Ссылок в выдаче: " + str(len(results)),
+                               "Это результаты поискового индекса. Страницы ботом не посещались.",
+                               "Совпадение имени или ника не подтверждает личность владельца профиля."])
+            card.links = [(f"{index}. {title}", url) for index, (title, url) in enumerate(results, 1)] + card.links
+        else:
+            card.lines.extend(["Подходящих публичных ссылок в ответе Brave нет.",
+                               "Отсутствие результатов не означает, что профиль не существует."])
+        return [card]
+
     async def _telegram_card(self, handle, bot):
         card = Card("📟 Telegram: публичная карточка", ["Логин: @" + handle],
                     [("Открыть в Telegram", "https://t.me/" + handle),
@@ -241,5 +264,6 @@ class LookupService:
         return [Card("🏚 Кадастровый номер", ["Формат кадастрового номера распознан.", "Автоматический источник сведений об объекте не подключён. Поиск собственников не выполняется."])]
 
     async def _restricted(self, query, bot):
-        return [Card("Доступные возможности", ["Поиск частных лиц по ФИО, дате рождения, документам, адресам и телефонным книгам здесь не выполняется.",
+        return [Card("Доступные возможности", ["Поиск скрытых контактов, по дате рождения, документам, адресам и телефонным книгам здесь не выполняется.",
+                     "Для публичных страниц по имени или нику используйте /search; нужен ключ Brave.",
                      "Можно проверить домен, IP, VIN, реквизиты компании или публичный профиль. Примеры: /help"])]

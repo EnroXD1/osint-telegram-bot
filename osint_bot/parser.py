@@ -79,6 +79,19 @@ def parse_query(text: str) -> Query:
             return Query(command[1:], argument)
         if command == "/user":
             return Query("username", username(argument))
+        if command == "/search":
+            argument = " ".join(argument.split())
+            if len(argument) > 200 or len(argument.split()) > 30:
+                raise QueryError("Для /search используйте до 200 символов и 30 слов.")
+            if argument.startswith("@") or re.fullmatch(r"[A-Za-z0-9_.-]+", argument):
+                value = username(argument)
+                if not re.search(r"[A-Za-z]", value) or re.search(r"\d{7,}", value):
+                    raise QueryError("Для /search укажите имя или публичный ник, без телефона или документов.")
+            elif re.fullmatch(r"[А-Яа-яЁёA-Za-z '’\-]+", argument) and any(c.isalpha() for c in argument):
+                value = argument
+            else:
+                raise QueryError("Для /search укажите имя или публичный ник, без телефона, email, документов или даты рождения.")
+            return Query("search", value)
         if command == "/vin":
             if not VIN.fullmatch(argument.upper()):
                 raise QueryError("VIN должен содержать 17 символов, без I, O и Q.")

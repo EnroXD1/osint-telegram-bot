@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 from aiogram import Bot, Dispatcher
-from aiogram.types import Chat, Message
+from aiogram.types import Chat, ChatFullInfo, Message
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+from aiogram.methods import GetChat
 
 from osint_bot.bot import RateLimiter, build_router
 from osint_bot.config import Config, load_env
@@ -15,6 +17,15 @@ from osint_bot.parser import QueryError, parse_query
 from osint_bot.reports import Card
 from osint_bot.service import LookupService, valid_inn, valid_ogrn
 from osint_bot.sources import SourceClient, SourceError
+
+
+TEST_CHAT_FIELDS = {
+    "accent_color_id": 0,
+    "max_reaction_count": 11,
+    "accepted_gift_types": {"unlimited_gifts": False, "limited_gifts": False,
+                            "unique_gifts": False, "premium_subscription": False,
+                            "gifts_from_channels": False},
+}
 
 
 class ParserTests(unittest.TestCase):
@@ -191,6 +202,76 @@ class SourceTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404))) as client:
             cards = await LookupService(SourceClient(client), Config()).lookup(parse_query("vk.com/sherlock"))
         self.assertIn("не проверены", cards[0].render())
+
+    async def test_public_telegram_card_for_channel_and_group(self):
+        for chat_type, label in (("channel", "публичный канал"), ("supergroup", "публичная группа")):
+            with self.subTest(chat_type=chat_type):
+                bot = AsyncMock()
+                bot.get_chat.return_value = ChatFullInfo(
+                    id=-1001234567890, type=chat_type, username="PublicDemo",
+                    title="Public <b>demo</b>", description="About <script>demo</script>",
+                    **TEST_CHAT_FIELDS)
+                async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404))) as client:
+                    cards = await LookupService(SourceClient(client), Config()).lookup(parse_query("t.me/publicdemo"), bot)
+                bot.get_chat.assert_awaited_once_with("@publicdemo")
+                report = cards[0].render()
+                self.assertIn("ID канала/группы: -1001234567890", report)
+                self.assertIn("@PublicDemo", report)
+                self.assertIn(label, report)
+                self.assertIn("Public &lt;b&gt;demo&lt;/b&gt;", report)
+                self.assertNotIn("<script>", report)
+                self.assertIn("https://core.telegram.org/bots/api#getchat", report)
+
+    async def test_telegram_card_excludes_private_and_direct_message_chats(self):
+        chats = [
+            ChatFullInfo(id=123456, type="private", first_name="PRIVATE_NAME",
+                         bio="PRIVATE_BIO", **TEST_CHAT_FIELDS),
+            ChatFullInfo(id=-100654321, type="supergroup", title="PRIVATE_NAME",
+                         description="PRIVATE_BIO", is_direct_messages=True,
+                         **TEST_CHAT_FIELDS),
+        ]
+        async with httpx.AsyncClient() as client:
+            service = LookupService(SourceClient(client), Config())
+            for chat in chats:
+                with self.subTest(chat_type=chat.type):
+                    bot = AsyncMock()
+                    bot.get_chat.return_value = chat
+                    report = (await service._telegram_card("publicdemo", bot)).render()
+                    self.assertNotIn(str(chat.id), report)
+                    self.assertNotIn("PRIVATE_NAME", report)
+                    self.assertNotIn("PRIVATE_BIO", report)
+                    self.assertIn("не подтверждены", report)
+
+    async def test_telegram_card_errors_and_missing_description(self):
+        async with httpx.AsyncClient() as client:
+            service = LookupService(SourceClient(client), Config())
+            bot = AsyncMock()
+            bot.get_chat.return_value = ChatFullInfo(id=-100123456, type="channel", username="publicdemo",
+                                                    **TEST_CHAT_FIELDS)
+            report = (await service._telegram_card("publicdemo", bot)).render()
+            self.assertIn("Описание: не указано", report)
+            for error, expected in (
+                (TelegramBadRequest(method=GetChat(chat_id="@publicdemo"), message="chat not found"), "не означает, что аккаунт отсутствует"),
+                (TelegramNetworkError(method=GetChat(chat_id="@publicdemo"), message="SECRET"), "сейчас недоступен"),
+            ):
+                with self.subTest(error=type(error).__name__):
+                    bot.get_chat.side_effect = error
+                    report = (await service._telegram_card("publicdemo", bot)).render()
+                    self.assertIn(expected, report)
+                    self.assertNotIn("SECRET", report)
+                    self.assertNotIn("ID канала/группы", report)
+            report = (await service._telegram_card("publicdemo", None)).render()
+            self.assertIn("не проверено", report)
+
+    async def test_at_username_includes_public_telegram_card(self):
+        bot = AsyncMock()
+        bot.get_chat.return_value = ChatFullInfo(id=-100123456, type="channel", username="publicdemo",
+                                                title="Public demo", **TEST_CHAT_FIELDS)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404))) as client:
+            cards = await LookupService(SourceClient(client), Config()).lookup(parse_query("@publicdemo"), bot)
+        telegram_cards = [card for card in cards if card.title.startswith("📟 Telegram")]
+        self.assertEqual(len(telegram_cards), 1)
+        self.assertIn("ID канала/группы: -100123456", telegram_cards[0].render())
 
     async def test_github_profile_and_token_routing(self):
         requests = []
